@@ -1,6 +1,7 @@
-import random
-
-from sumo_loader import load_trace
+from sumo_loader import (
+    load_trace,
+    get_first_vehicle
+)
 
 from vehicle import Vehicle
 from mec_server import MECServer
@@ -10,29 +11,45 @@ from dag_manager import ready_tasks
 
 from scheduler import choose_server
 
-# --------------------
-# VEHICLE GENERATION
-# --------------------
+# ----------------------------------
+# LOAD SUMO MOBILITY TRACE
+# ----------------------------------
 
 trace = load_trace()
 
-first_vehicle = trace.iloc[0]
+vehicle_data = get_first_vehicle(
+    trace
+)
 
 vehicle = Vehicle(
 
-    0,
+    vehicle_data["id"],
 
-    first_vehicle["x"],
+    vehicle_data["x"],
 
-    first_vehicle["y"],
+    vehicle_data["y"],
 
-    first_vehicle["speed"]
+    vehicle_data["speed"]
 
 )
 
-# --------------------
-# MEC SERVER GENERATION
-# --------------------
+print("\nSUMO VEHICLE LOADED")
+
+print(
+    f"Vehicle ID : {vehicle.id}"
+)
+
+print(
+    f"Position   : ({vehicle.x:.2f}, {vehicle.y:.2f})"
+)
+
+print(
+    f"Speed      : {vehicle.speed:.2f}"
+)
+
+# ----------------------------------
+# MEC SERVERS
+# ----------------------------------
 
 servers = [
 
@@ -62,15 +79,15 @@ servers = [
 
 ]
 
-# --------------------
-# DAG GENERATION
-# --------------------
+# ----------------------------------
+# DAG
+# ----------------------------------
 
 G = build_dag()
 
-# --------------------
-# TASK GENERATION
-# --------------------
+# ----------------------------------
+# TASK DEFINITIONS
+# ----------------------------------
 
 tasks = {
 
@@ -101,18 +118,16 @@ tasks = {
 
 }
 
-# --------------------
+# ----------------------------------
 # DAG EXECUTION
-# --------------------
+# ----------------------------------
 
 completed = set()
-
-vehicle = vehicles[0]
 
 application_completion_time = 0
 
 print("\nQUEUE AWARE DAG SCHEDULING")
-print("-" * 50)
+print("-" * 60)
 
 while len(completed) < len(tasks):
 
@@ -122,7 +137,7 @@ while len(completed) < len(tasks):
     )
 
     print(
-        f"\nReady Tasks: {ready}"
+        f"\nReady Tasks : {ready}"
     )
 
     for task_id in ready:
@@ -142,7 +157,7 @@ while len(completed) < len(tasks):
         if server is None:
 
             print(
-                f"{task_id}: No server available"
+                f"{task_id}: No feasible MEC server"
             )
 
             continue
@@ -158,31 +173,46 @@ while len(completed) < len(tasks):
         completed.add(task_id)
 
         print(
+            f"\nTask {task_id}"
+        )
 
-            f"Task {task_id}"
+        print(
+            f"Vehicle Position "
+            f"({vehicle.x:.2f}, "
+            f"{vehicle.y:.2f})"
+        )
 
-            f" -> MEC {server.id}"
+        print(
+            f"Assigned MEC : "
+            f"{server.id}"
+        )
 
-            f" | Queue Delay: "
-
+        print(
+            f"Queue Delay  : "
             f"{server.waiting_time():.4f}"
+        )
 
-            f" | Completion: "
-
-            f"{completion_time:.4f}s"
-
+        print(
+            f"Completion   : "
+            f"{completion_time:.4f} sec"
         )
 
     for s in servers:
 
         s.process()
 
+# ----------------------------------
+# FINAL RESULTS
+# ----------------------------------
+
 print("\n")
-print("=" * 50)
+print("=" * 60)
+
 print(
     "APPLICATION FINISHED"
 )
-print("=" * 50)
+
+print("=" * 60)
 
 print(
     f"Total Completion Time: "
@@ -192,4 +222,9 @@ print(
 print(
     f"Tasks Completed: "
     f"{len(completed)}"
+)
+
+print(
+    f"SUMO Vehicle Used: "
+    f"{vehicle.id}"
 )

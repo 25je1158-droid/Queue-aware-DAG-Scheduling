@@ -6,16 +6,18 @@ def load_trace():
         "sumo/mobility_trace.csv"
     )
 
-def get_vehicle_snapshot(
-    trace,
-    vehicle_id
-):
+def get_first_vehicle(trace):
 
-    rows = trace[
-        trace["vehicle"] == vehicle_id
-    ]
+    first = trace.iloc[0]
 
-    if len(rows) == 0:
-        return None
+    return {
 
-    return rows.iloc[0]
+        "id": first["vehicle"],
+
+        "x": float(first["x"]),
+
+        "y": float(first["y"]),
+
+        "speed": float(first["speed"])
+
+    }
