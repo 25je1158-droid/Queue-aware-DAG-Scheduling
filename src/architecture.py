@@ -1,39 +1,58 @@
 import matplotlib.pyplot as plt
 
 steps = [
-'Vehicle\nMobility',
-'Connectivity',
-'Ready\nTask',
-'MEC\nSelection',
-'Queue\nAware',
-'Execution',
-'Queue\nUpdate',
-'DAG\nUpdate'
+
+    "Vehicle\nMobility",
+
+    "Connectivity",
+
+    "Ready\nTasks",
+
+    "Server\nSelection",
+
+    "Queue\nAware",
+
+    "Execution",
+
+    "Queue\nUpdate",
+
+    "DAG\nUpdate"
+
 ]
 
-fig, ax = plt.subplots(figsize=(12,2))
+fig, ax = plt.subplots(
+    figsize=(13,2)
+)
 
-for i,s in enumerate(steps):
+for i, step in enumerate(steps):
 
     ax.text(
         i,
         0,
-        s,
-        bbox=dict(facecolor='lightblue')
+        step,
+        ha="center",
+        va="center",
+        bbox=dict(
+            boxstyle="round",
+            facecolor="lightblue"
+        )
     )
 
     if i < len(steps)-1:
 
         ax.arrow(
-            i+0.25,
+            i+0.3,
             0,
             0.4,
             0,
-            head_width=0.05
+            head_width=0.04,
+            length_includes_head=True
         )
 
-ax.axis('off')
+ax.axis("off")
 
 plt.savefig(
-'results/architecture.png'
+    "results/architecture.png"
 )
+
+print("Architecture saved")
