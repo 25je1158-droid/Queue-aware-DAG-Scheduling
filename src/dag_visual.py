@@ -11,12 +11,14 @@ G.add_edges_from([
 ("T4","T5")
 ])
 
+plt.figure(figsize=(6,4))
+
 nx.draw(
     G,
     with_labels=True,
     node_size=3000
 )
 
-plt.savefig(
-"results/dag.png"
-)
+plt.savefig("results/dag.png")
+
+print("DAG saved")
