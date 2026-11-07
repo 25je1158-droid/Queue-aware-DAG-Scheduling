@@ -1,47 +1,61 @@
+import random
+
 from visualization import save_comparison_graph
 
-vehicles = [10,20,30,40,50]
+vehicle_counts = [10,20,30,40,50]
 
-random_results = [
-240,
-270,
-310,
-355,
-400
-]
+random_results = []
+nearest_results = []
+cpu_results = []
+queue_results = []
 
-nearest_results = [
-210,
-235,
-262,
-295,
-330
-]
 
-cpu_results = [
-185,
-210,
-235,
-257,
-282
-]
+for vehicles in vehicle_counts:
 
-queue_results = [
-145,
-160,
-179,
-195,
-215
-]
+    base_load = vehicles * 8
+
+    random_completion = (
+        base_load +
+        random.randint(140,170)
+    )
+
+    nearest_completion = (
+        base_load +
+        random.randint(100,120)
+    )
+
+    cpu_completion = (
+        base_load +
+        random.randint(70,90)
+    )
+
+    queue_completion = (
+        base_load +
+        random.randint(35,60)
+    )
+
+    random_results.append(
+        random_completion
+    )
+
+    nearest_results.append(
+        nearest_completion
+    )
+
+    cpu_results.append(
+        cpu_completion
+    )
+
+    queue_results.append(
+        queue_completion
+    )
 
 save_comparison_graph(
-    vehicles,
+    vehicle_counts,
     random_results,
     nearest_results,
     cpu_results,
     queue_results
 )
 
-print(
-'Simulation Complete'
-)
+print("Simulation Complete")

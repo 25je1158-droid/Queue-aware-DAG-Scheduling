@@ -8,35 +8,37 @@ def save_comparison_graph(
     queue_values
 ):
 
-    plt.figure(
-        figsize=(8,5)
-    )
+    plt.figure(figsize=(9,6))
 
     plt.plot(
         x,
         random_values,
         marker='o',
+        linewidth=2,
         label='Random'
     )
 
     plt.plot(
         x,
         nearest_values,
-        marker='o',
-        label='Nearest'
+        marker='s',
+        linewidth=2,
+        label='Nearest MEC'
     )
 
     plt.plot(
         x,
         cpu_values,
-        marker='o',
-        label='Max CPU'
+        marker='^',
+        linewidth=2,
+        label='Highest CPU'
     )
 
     plt.plot(
         x,
         queue_values,
-        marker='o',
+        marker='D',
+        linewidth=2,
         label='Queue Aware'
     )
 
@@ -48,6 +50,10 @@ def save_comparison_graph(
         'Application Completion Time'
     )
 
+    plt.title(
+        'Completion Time Comparison'
+    )
+
     plt.legend()
 
     plt.grid(True)
@@ -55,3 +61,5 @@ def save_comparison_graph(
     plt.savefig(
         'results/completion_time.png'
     )
+
+    plt.close()
