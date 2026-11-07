@@ -1,5 +1,7 @@
 import random
 
+from sumo_loader import load_trace
+
 from vehicle import Vehicle
 from mec_server import MECServer
 
@@ -12,24 +14,21 @@ from scheduler import choose_server
 # VEHICLE GENERATION
 # --------------------
 
-vehicles = []
+trace = load_trace()
 
-for i in range(10):
+first_vehicle = trace.iloc[0]
 
-    vehicles.append(
+vehicle = Vehicle(
 
-        Vehicle(
+    0,
 
-            i,
+    first_vehicle["x"],
 
-            random.randint(0, 500),
+    first_vehicle["y"],
 
-            random.randint(0, 500),
+    first_vehicle["speed"]
 
-            random.randint(10, 25)
-
-        )
-    )
+)
 
 # --------------------
 # MEC SERVER GENERATION
