@@ -1,61 +1,196 @@
 import random
 
-from visualization import save_comparison_graph
+from vehicle import Vehicle
+from mec_server import MECServer
 
-vehicle_counts = [10,20,30,40,50]
+from dag_manager import build_dag
+from dag_manager import ready_tasks
 
-random_results = []
-nearest_results = []
-cpu_results = []
-queue_results = []
+from scheduler import choose_server
 
+# --------------------
+# VEHICLE GENERATION
+# --------------------
 
-for vehicles in vehicle_counts:
+vehicles = []
 
-    base_load = vehicles * 8
+for i in range(10):
 
-    random_completion = (
-        base_load +
-        random.randint(140,170)
+    vehicles.append(
+
+        Vehicle(
+
+            i,
+
+            random.randint(0, 500),
+
+            random.randint(0, 500),
+
+            random.randint(10, 25)
+
+        )
     )
 
-    nearest_completion = (
-        base_load +
-        random.randint(100,120)
+# --------------------
+# MEC SERVER GENERATION
+# --------------------
+
+servers = [
+
+    MECServer(
+        1,
+        100,
+        100,
+        8e9,
+        250
+    ),
+
+    MECServer(
+        2,
+        300,
+        300,
+        12e9,
+        250
+    ),
+
+    MECServer(
+        3,
+        450,
+        150,
+        16e9,
+        250
     )
 
-    cpu_completion = (
-        base_load +
-        random.randint(70,90)
+]
+
+# --------------------
+# DAG GENERATION
+# --------------------
+
+G = build_dag()
+
+# --------------------
+# TASK GENERATION
+# --------------------
+
+tasks = {
+
+    "T1": {
+        "data_size": 10e6,
+        "cpu_cycles": 8e9
+    },
+
+    "T2": {
+        "data_size": 12e6,
+        "cpu_cycles": 7e9
+    },
+
+    "T3": {
+        "data_size": 15e6,
+        "cpu_cycles": 10e9
+    },
+
+    "T4": {
+        "data_size": 8e6,
+        "cpu_cycles": 6e9
+    },
+
+    "T5": {
+        "data_size": 5e6,
+        "cpu_cycles": 4e9
+    }
+
+}
+
+# --------------------
+# DAG EXECUTION
+# --------------------
+
+completed = set()
+
+vehicle = vehicles[0]
+
+application_completion_time = 0
+
+print("\nQUEUE AWARE DAG SCHEDULING")
+print("-" * 50)
+
+while len(completed) < len(tasks):
+
+    ready = ready_tasks(
+        G,
+        completed
     )
 
-    queue_completion = (
-        base_load +
-        random.randint(35,60)
+    print(
+        f"\nReady Tasks: {ready}"
     )
 
-    random_results.append(
-        random_completion
-    )
+    for task_id in ready:
 
-    nearest_results.append(
-        nearest_completion
-    )
+        task = tasks[task_id]
 
-    cpu_results.append(
-        cpu_completion
-    )
+        server, completion_time = choose_server(
 
-    queue_results.append(
-        queue_completion
-    )
+            task,
 
-save_comparison_graph(
-    vehicle_counts,
-    random_results,
-    nearest_results,
-    cpu_results,
-    queue_results
+            vehicle,
+
+            servers
+
+        )
+
+        if server is None:
+
+            print(
+                f"{task_id}: No server available"
+            )
+
+            continue
+
+        server.add_task(
+            task["cpu_cycles"]
+        )
+
+        application_completion_time += (
+            completion_time
+        )
+
+        completed.add(task_id)
+
+        print(
+
+            f"Task {task_id}"
+
+            f" -> MEC {server.id}"
+
+            f" | Queue Delay: "
+
+            f"{server.waiting_time():.4f}"
+
+            f" | Completion: "
+
+            f"{completion_time:.4f}s"
+
+        )
+
+    for s in servers:
+
+        s.process()
+
+print("\n")
+print("=" * 50)
+print(
+    "APPLICATION FINISHED"
+)
+print("=" * 50)
+
+print(
+    f"Total Completion Time: "
+    f"{application_completion_time:.4f} sec"
 )
 
-print("Simulation Complete")
+print(
+    f"Tasks Completed: "
+    f"{len(completed)}"
+)
