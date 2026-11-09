@@ -1,4 +1,0 @@
-server,cpu_cycles_per_second,max_waiting_queue,busy_seconds,completed_cycles,utilization_percent
-1,8000000000.0,3,19.3,143411763527.49,89.3519
-2,12000000000.0,2,8.3,88353216014.59,38.4259
-3,16000000000.0,4,8.8,118432786697.87,40.7407
