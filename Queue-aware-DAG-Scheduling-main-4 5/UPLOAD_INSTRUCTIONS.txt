@@ -1,0 +1,28 @@
+PROJECT UPLOAD PACKAGE
+
+Upload the contents of this ZIP to your GitHub repository, preserving folders.
+
+Contains:
+- src/: simulation, scheduler, baselines, metrics and visualization code
+- sumo/: SUMO network, routes, configuration, mobility trace and trace generator
+- tests/: automated tests
+- results/: CSV experiment data and plots
+- report/: Markdown report, completed Word report and figures
+- requirements.txt: Python dependencies
+
+Run from the repository root:
+    python -m pip install -r requirements.txt
+    python src/phase2_simulation.py
+    python src/algorithm_comparison.py
+    python src/run_sensitivity_experiments.py
+    pytest -q
+
+SUMO:
+The included mobility_trace.csv lets the Python simulation run without SUMO.
+To regenerate the trace, install SUMO, configure SUMO_HOME, then run:
+    python sumo/trace_generator.py
+
+Scope:
+This project uses offline SUMO CSV trace replay, not live SUMO-TraCI co-simulation.
+The proposed scheduler is a heuristic, not a reproduction of MIA3C or BPSO and
+does not claim global optimality.
