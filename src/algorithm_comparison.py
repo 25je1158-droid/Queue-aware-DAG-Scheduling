@@ -40,35 +40,38 @@ POLICY_SEED = 2026
 
 
 def choose_server(policy: str, task, vehicle, servers, rng):
-    """Return (server, upload_duration) among currently reachable servers."""
+    """Return (server, upload_duration) among mobility-feasible candidates."""
     candidates = []
     for server in servers:
         distance = sim.distance(vehicle, server)
-        if distance <= sim.COVERAGE_RADIUS:
-            rate = max(1.0, sim.transmission_rate(distance))
-            upload_time = task.data_bits / rate
-            candidates.append((server, distance, upload_time))
+        if distance > sim.COVERAGE_RADIUS:
+            continue
+        rate = max(1.0, sim.transmission_rate(distance))
+        upload_time = task.data_bits / rate
+        predicted_finish = server.predicted_finish(task.total_cycles)
+        contact_time = sim.estimate_contact_time(vehicle, server)
+        if upload_time + predicted_finish > contact_time:
+            continue
+        candidates.append((server, distance, upload_time, predicted_finish))
 
     if not candidates:
         return None, 0.0
 
     if policy == "Random":
-        server, _, upload_time = rng.choice(candidates)
+        server, _, upload_time, _ = rng.choice(candidates)
         return server, upload_time
 
     if policy == "Nearest":
-        server, _, upload_time = min(candidates, key=lambda item: item[1])
+        server, _, upload_time, _ = min(candidates, key=lambda item: item[1])
         return server, upload_time
 
     if policy == "Highest CPU":
-        server, _, upload_time = max(candidates, key=lambda item: item[0].cpu)
+        server, _, upload_time, _ = max(candidates, key=lambda item: item[0].cpu)
         return server, upload_time
 
-    # Proposed policy: minimize estimated upload + queue + execution finish delay.
     if policy == "Proposed Queue-Aware":
-        server, _, upload_time = min(
-            candidates,
-            key=lambda item: item[2] + item[0].predicted_finish(task.total_cycles),
+        server, _, upload_time, predicted = min(
+            candidates, key=lambda item: item[2] + item[3]
         )
         return server, upload_time
 
@@ -109,9 +112,13 @@ def run_one_policy(policy: str, trace) -> dict:
         for vehicle in vehicles:
             if not vehicle.active:
                 continue
-            for task_id in ("T1", "T2", "T3", "T4", "T5"):
-                if not sim.task_is_ready(vehicle, task_id):
-                    continue
+            ready_ids = [tid for tid in ("T1", "T2", "T3", "T4", "T5")
+                         if sim.task_is_ready(vehicle, tid)]
+            ready_ids.sort(
+                key=lambda tid: tasks[(vehicle.vehicle_id, tid)].critical_rank,
+                reverse=True,
+            )
+            for task_id in ready_ids:
                 task = tasks[(vehicle.vehicle_id, task_id)]
                 task.ready_time = sim_time
                 server, upload_time = choose_server(
@@ -158,7 +165,7 @@ def run_one_policy(policy: str, trace) -> dict:
         v for v in vehicles if v.application_finish is not None
     ]
     app_times = [
-        v.application_finish - (v.application_start or 0.0)
+        v.application_finish - v.application_start
         for v in completed_apps
     ]
     completed_tasks = [t for t in tasks.values() if t.state == "done"]

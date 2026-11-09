@@ -24,7 +24,7 @@ TIME_STEP = 0.1
 MAX_SIMULATION_TIME = 500.0
 MAX_VEHICLES = 20             # Increase to 50 or 100 for larger experiments.
 TASKS_PER_VEHICLE = 5
-COVERAGE_RADIUS = 250.0       # metres
+COVERAGE_RADIUS = 300.0       # metres
 BANDWIDTH = 20e6              # bits/second
 TX_POWER = 0.2
 NOISE_POWER = 1e-10
@@ -92,6 +92,9 @@ class Task:
     finish_time: Optional[float] = None
     queue_wait: float = 0.0
     upload_time: float = 0.0
+    critical_rank: float = 0.0
+    allocated_cpu_total: float = 0.0
+    allocation_samples: int = 0
 
 
 class MECServer:
@@ -109,13 +112,10 @@ class MECServer:
     def predicted_finish(self, cycles: float) -> float:
         queued_cycles = sum(t.remaining_cycles for t in self.waiting)
         active_cycles = sum(t.remaining_cycles for t in self.running)
-        # Approximate current and queued workload; parallelism is reflected
-        # by the number of active execution slots.
-        active_rate = self.cpu / max(1, len(self.running))
-        active_delay = active_cycles / max(active_rate, 1.0)
-        queue_delay = queued_cycles / self.cpu
-        new_task_delay = cycles / (self.cpu / MAX_PARALLEL_TASKS)
-        return active_delay + queue_delay + new_task_delay
+        # Work-conserving estimate of active + queued + candidate workload.
+        # This is a scheduling heuristic, not an exact queueing-theory solution.
+        total_work = active_cycles + queued_cycles + max(0.0, cycles)
+        return total_work / max(self.cpu, 1.0)
 
     def admit(self, task: Task, now: float) -> None:
         task.state = "queued"
@@ -124,7 +124,7 @@ class MECServer:
         self.max_queue_length = max(self.max_queue_length, len(self.waiting))
 
     def advance(self, now: float, dt: float) -> List[Task]:
-        """Start queued work and share CPU equally among active tasks."""
+        """Execute queued tasks using critical-path-weighted CPU sharing."""
         while self.waiting and len(self.running) < MAX_PARALLEL_TASKS:
             task = self.waiting.popleft()
             task.state = "running"
@@ -134,19 +134,30 @@ class MECServer:
 
         finished = []
         if self.running:
-            share = self.cpu / len(self.running)
+            # Tasks with longer remaining downstream paths receive a larger
+            # fraction of the server CPU. Shares always sum to server capacity.
+            weights = [max(task.critical_rank, 1e-9) for task in self.running]
+            total_weight = sum(weights)
             self.busy_seconds += dt
-            for task in list(self.running):
-                work = share * dt
-                task.remaining_cycles -= work
-                self.completed_cycles += min(work, max(0.0, task.remaining_cycles + work))
-                if task.remaining_cycles <= 0:
-                    task.remaining_cycles = 0.0
+            for task, weight in zip(list(self.running), weights):
+                allocated_cpu = self.cpu * weight / total_weight
+                task.allocated_cpu_total += allocated_cpu * dt
+                task.allocation_samples += 1
+                work = allocated_cpu * dt
+                before = task.remaining_cycles
+                task.remaining_cycles = max(0.0, before - work)
+                self.completed_cycles += min(work, before)
+                if task.remaining_cycles <= 0.0:
                     task.state = "done"
                     task.finish_time = now + dt
                     self.running.remove(task)
                     finished.append(task)
         return finished
+
+    def utilization(self, simulation_end_time: float) -> float:
+        if simulation_end_time <= 0.0:
+            return 0.0
+        return min(100.0, 100.0 * self.busy_seconds / simulation_end_time)
 
 
 def load_trace(path: str) -> Dict[str, List[Tuple[float, float, float, float]]]:
@@ -176,7 +187,9 @@ def create_vehicles(trace: Dict[str, List[Tuple[float, float, float, float]]]) -
     vehicles = []
     for vid in chosen:
         first = trace[vid][0]
-        vehicles.append(VehicleState(vid, first[1], first[2], first[3], trace[vid]))
+        vehicle = VehicleState(vid, first[1], first[2], first[3], trace[vid])
+        vehicle.application_start = first[0]
+        vehicles.append(vehicle)
     return vehicles
 
 
@@ -186,20 +199,52 @@ def create_tasks(vehicles: List[VehicleState]) -> Dict[Tuple[str, str], Task]:
     for vehicle in vehicles:
         vehicle.task_states = {"T1": "new", "T2": "new", "T3": "new",
                                "T4": "new", "T5": "new"}
-        vehicle.application_start = 0.0
         for index in range(1, TASKS_PER_VEHICLE + 1):
             task_id = "T" + str(index)
-            cycles = rng.uniform(1.0, 2.0) * 1e9
+            cycles = rng.uniform(2.0, 5.0) * 1e9
             data_mb = rng.uniform(2.0, 8.0)
             all_tasks[(vehicle.vehicle_id, task_id)] = Task(
                 task_id, vehicle.vehicle_id, data_mb * 8e6, cycles,
-                deadline=20.0, remaining_cycles=cycles
+                deadline=vehicle.application_start + 20.0,
+                remaining_cycles=cycles
             )
+    # Task-specific critical-path rank using estimated execution time on the
+    # fastest MEC server: rank(i) = own_time(i) + max(rank(successor)).
+    fastest_cpu = max(config[3] for config in SERVER_CONFIG)
+    for vehicle in vehicles:
+        memo = {}
+        def rank(task_id: str) -> float:
+            if task_id in memo:
+                return memo[task_id]
+            own_time = all_tasks[(vehicle.vehicle_id, task_id)].total_cycles / fastest_cpu
+            children = successors(task_id)
+            downstream = max((rank(child) for child in children), default=0.0)
+            memo[task_id] = own_time + downstream
+            return memo[task_id]
+        for task_id in ("T1", "T2", "T3", "T4", "T5"):
+            all_tasks[(vehicle.vehicle_id, task_id)].critical_rank = rank(task_id)
     return all_tasks
 
 
 def predecessors(task_id: str) -> List[str]:
     return [source for source, target in DAG_EDGES if target == task_id]
+
+
+def successors(task_id: str) -> List[str]:
+    return [target for source, target in DAG_EDGES if source == task_id]
+
+
+def estimate_contact_time(vehicle: VehicleState, server: MECServer) -> float:
+    """Conservative contact-time estimate using current speed and radius margin.
+
+    The trace currently provides speed but not heading relative to each server;
+    treating motion as directly outward gives a conservative lower-bound estimate.
+    A stationary vehicle is treated as having unlimited contact time for this step.
+    """
+    margin = max(0.0, COVERAGE_RADIUS - distance(vehicle, server))
+    if vehicle.speed <= 0.1:
+        return float("inf")
+    return margin / vehicle.speed
 
 
 def distance(vehicle: VehicleState, server: MECServer) -> float:
@@ -225,6 +270,11 @@ def choose_server(task: Task, vehicle: VehicleState,
             continue
         upload = task.data_bits / max(1.0, transmission_rate(d))
         predicted = server.predicted_finish(task.total_cycles)
+        contact_time = estimate_contact_time(vehicle, server)
+        # Reject a server if the estimated upload plus execution/queue delay
+        # exceeds the conservative remaining coverage time.
+        if upload + predicted > contact_time:
+            continue
         score = upload + predicted
         if score < best_score:
             best, best_score, best_upload = server, score, upload
@@ -242,8 +292,10 @@ def write_results(tasks: Dict[Tuple[str, str], Task], vehicles: List[VehicleStat
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     task_path = os.path.join(OUTPUT_DIR, "phase2_task_results.csv")
     with open(task_path, "w", newline="") as handle:
-        fields = ["vehicle", "task", "server", "state", "upload_time",
-                  "queue_wait", "execution_time", "finish_time", "deadline_met"]
+        fields = ["vehicle", "task", "server", "state", "data_bits",
+                  "cpu_cycles", "critical_path_rank", "upload_time", "queue_wait",
+                  "execution_time", "average_allocated_cpu_cycles_per_second",
+                  "finish_time", "deadline", "deadline_met"]
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for task in tasks.values():
@@ -252,23 +304,52 @@ def write_results(tasks: Dict[Tuple[str, str], Task], vehicles: List[VehicleStat
             writer.writerow({
                 "vehicle": task.vehicle_id, "task": task.task_id,
                 "server": task.server_id if task.server_id is not None else "",
-                "state": task.state, "upload_time": round(task.upload_time, 6),
+                "state": task.state, "data_bits": round(task.data_bits, 2),
+                "cpu_cycles": round(task.total_cycles, 2),
+                "critical_path_rank": round(task.critical_rank, 6),
+                "upload_time": round(task.upload_time, 6),
                 "queue_wait": round(task.queue_wait, 6),
                 "execution_time": round(execution, 6),
+                "average_allocated_cpu_cycles_per_second": round(
+                    task.allocated_cpu_total / max(task.allocation_samples * TIME_STEP, TIME_STEP), 2
+                ) if task.allocation_samples else 0.0,
                 "finish_time": round(task.finish_time, 6) if task.finish_time is not None else "",
+                "deadline": round(task.deadline, 6),
                 "deadline_met": ("yes" if task.finish_time is not None and task.finish_time <= task.deadline else "no")
+            })
+
+    app_path = os.path.join(OUTPUT_DIR, "phase2_application_results.csv")
+    with open(app_path, "w", newline="", encoding="utf-8") as handle:
+        fields = ["vehicle", "application_start", "application_finish",
+                  "application_completion_seconds", "all_tasks_completed"]
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for vehicle in vehicles:
+            elapsed = (vehicle.application_finish - vehicle.application_start
+                       if vehicle.application_finish is not None and vehicle.application_start is not None
+                       else "")
+            writer.writerow({
+                "vehicle": vehicle.vehicle_id,
+                "application_start": vehicle.application_start,
+                "application_finish": vehicle.application_finish if vehicle.application_finish is not None else "",
+                "application_completion_seconds": round(elapsed, 6) if elapsed != "" else "",
+                "all_tasks_completed": "yes" if vehicle.application_finish is not None else "no",
             })
 
     summary_path = os.path.join(OUTPUT_DIR, "phase2_server_summary.csv")
     with open(summary_path, "w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["server", "cpu_cycles_per_second", "max_waiting_queue", "busy_seconds"])
+        writer.writerow(["server", "cpu_cycles_per_second", "max_waiting_queue",
+                         "busy_seconds", "completed_cycles", "utilization_percent"])
         for server in servers:
             writer.writerow([server.id, server.cpu, server.max_queue_length,
-                             round(server.busy_seconds, 4)])
+                             round(server.busy_seconds, 4),
+                             round(server.completed_cycles, 2),
+                             round(server.utilization(sim_end), 4)])
 
     completed_apps = [v for v in vehicles if v.application_finish is not None]
-    app_times = [v.application_finish - (v.application_start or 0.0) for v in completed_apps]
+    app_times = [v.application_finish - v.application_start
+                 for v in completed_apps if v.application_start is not None]
     completed_tasks = [t for t in tasks.values() if t.state == "done"]
     queue_values = [t.queue_wait for t in completed_tasks]
     upload_values = [t.upload_time for t in completed_tasks]
@@ -306,7 +387,7 @@ def run_simulation() -> None:
 
     print("PHASE 2: MULTI-VEHICLE DYNAMIC MEC/DAG SIMULATION")
     print("Vehicles:", len(vehicles), " | DAG tasks per vehicle:", TASKS_PER_VEHICLE)
-    print("MEC servers:", len(servers), " | CPU sharing: equal share among active tasks")
+    print("MEC servers:", len(servers), " | CPU sharing: critical-path-weighted allocation")
 
     while sim_time <= MAX_SIMULATION_TIME:
         # 1. Update vehicle positions using the SUMO trace at this time.
@@ -326,9 +407,13 @@ def run_simulation() -> None:
         for vehicle in vehicles:
             if not vehicle.active:
                 continue
-            for task_id in ["T1", "T2", "T3", "T4", "T5"]:
-                if not task_is_ready(vehicle, task_id):
-                    continue
+            ready_ids = [tid for tid in ("T1", "T2", "T3", "T4", "T5")
+                         if task_is_ready(vehicle, tid)]
+            ready_ids.sort(
+                key=lambda tid: tasks[(vehicle.vehicle_id, tid)].critical_rank,
+                reverse=True,
+            )
+            for task_id in ready_ids:
                 task = tasks[(vehicle.vehicle_id, task_id)]
                 task.ready_time = sim_time
                 server, _, upload = choose_server(task, vehicle, servers)
